@@ -1,0 +1,16 @@
+name: Testing Workflow Variables
+on:
+ workflow_dispatch
+env:
+ cloud: AWS
+
+jobs:
+ greeting_job:
+   runs-on: ubuntu-latest
+   env:
+     Greeting: Hi
+   steps:
+     - name: "Hi Polly"
+       run: echo "$Greeting $First_Name is using $cloud with ${{vars.project_ID}}!"
+       env:
+        First_Name: Pallavi
