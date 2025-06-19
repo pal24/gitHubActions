@@ -1,72 +1,111 @@
 import requests
 import csv
+from datetime import datetime, timedelta
 
-# ==== CONFIGURATION ====
-GITHUB_TOKEN = 'tetxgydd'
-REPOS = [  # Format: ("owner", "repo")
-    ("octocat", "Hello-World"),
-    ("pal24", "gitHubActions"),
-    # Add more as needed
+# GitHub Token (keep it secure!)
+GITHUB_TOKEN = "ghp_your_token_here"  # <-- Replace with your token
+HEADERS = {"Authorization": f"token {GITHUB_TOKEN}"}
+
+# List your repositories here
+REPOS = [
+    "org1/repo1",
+    "org2/repo2",
+    # Add more repos as needed
 ]
+
+WORKFLOW_FILENAME = "deploy.yml"
 BRANCH = "main"
-CSV_FILENAME = "workflow_runs_metadata.csv"
-MAX_RUNS_PER_REPO = 10  # Change as needed
-# ========================
+DAYS = 15
+CSV_FILE = "workflow_deploy_metadata.csv"
 
-HEADERS = {
-    "Authorization": f"Bearer {GITHUB_TOKEN}",
-    "Accept": "application/vnd.github+json"
-}
+def get_workflow_id(repo):
+    url = f"https://api.github.com/repos/{repo}/actions/workflows"
+    r = requests.get(url, headers=HEADERS)
+    r.raise_for_status()
+    workflows = r.json().get("workflows", [])
+    for wf in workflows:
+        if wf["path"].endswith(WORKFLOW_FILENAME):
+            return wf["id"]
+    return None
 
-def get_workflow_runs(owner, repo, branch="main", per_page=10):
-    url = f"https://api.github.com/repos/{owner}/{repo}/actions/runs"
+def get_recent_runs(repo, workflow_id):
+    since = (datetime.utcnow() - timedelta(days=DAYS)).isoformat() + "Z"
+    url = f"https://api.github.com/repos/{repo}/actions/workflows/{workflow_id}/runs"
     params = {
-        "branch": branch,
-        "per_page": per_page
+        "branch": BRANCH,
+        "per_page": 50,
+    }
+    r = requests.get(url, headers=HEADERS, params=params)
+    r.raise_for_status()
+    all_runs = r.json().get("workflow_runs", [])
+    recent_runs = [run for run in all_runs if run["created_at"] >= since]
+    return recent_runs
+
+def extract_run_metadata(repo, run):
+    return {
+        "repository": repo,
+        "status": run.get("status"),
+        "timestamp": run.get("created_at"),
+        "conclusion": run.get("conclusion"),
+        "commit_message": run["head_commit"]["message"] if run.get("head_commit") else "N/A",
+        "triggered_by": run.get("triggering_actor", {}).get("login", "N/A"),
     }
 
-    response = requests.get(url, headers=HEADERS, params=params)
-    if response.status_code != 200:
-        print(f"Failed to fetch for {owner}/{repo}: {response.status_code}")
-        return []
-
-    return response.json().get('workflow_runs', [])
-
-def collect_data():
+def main():
     all_data = []
 
-    for owner, repo in REPOS:
-        print(f"Fetching workflow runs for {owner}/{repo} on branch '{BRANCH}'...")
-        runs = get_workflow_runs(owner, repo, BRANCH, MAX_RUNS_PER_REPO)
-        for run in runs:
+    for repo in REPOS:
+        print(f"Processing: {repo}")
+        try:
+            wf_id = get_workflow_id(repo)
+            if not wf_id:
+                print(f"  No deploy.yml workflow found.")
+                all_data.append({
+                    "repository": repo,
+                    "status": "NO RUN",
+                    "timestamp": "",
+                    "conclusion": "",
+                    "commit_message": "",
+                    "triggered_by": ""
+                })
+                continue
+
+            runs = get_recent_runs(repo, wf_id)
+            if not runs:
+                all_data.append({
+                    "repository": repo,
+                    "status": "NO RUN",
+                    "timestamp": "",
+                    "conclusion": "",
+                    "commit_message": "",
+                    "triggered_by": ""
+                })
+            else:
+                for run in runs:
+                    metadata = extract_run_metadata(repo, run)
+                    all_data.append(metadata)
+
+        except Exception as e:
+            print(f"  Error processing {repo}: {e}")
             all_data.append({
-                "owner": owner,
                 "repository": repo,
-                "workflow_name": run.get("name"),
-                "run_id": run.get("id"),
-                "status": run.get("status"),
-                "conclusion": run.get("conclusion"),
-                "run_started_at": run.get("run_started_at"),
-                "html_url": run.get("html_url"),
-                "branch": run.get("head_branch"),
-                "commit_message": run.get("head_commit", {}).get("message"),
-                "commit_sha": run.get("head_sha"),
+                "status": "ERROR",
+                "timestamp": "",
+                "conclusion": "",
+                "commit_message": str(e),
+                "triggered_by": ""
             })
-    return all_data
 
-def export_to_csv(data, filename):
-    if not data:
-        print("No data to export.")
-        return
-
-    keys = data[0].keys()
-    with open(filename, 'w', newline='', encoding='utf-8') as f:
-        writer = csv.DictWriter(f, fieldnames=keys)
+    # Write to CSV
+    with open(CSV_FILE, "w", newline='', encoding='utf-8') as f:
+        writer = csv.DictWriter(f, fieldnames=[
+            "repository", "status", "timestamp", "conclusion", "commit_message", "triggered_by"
+        ])
         writer.writeheader()
-        writer.writerows(data)
+        for row in all_data:
+            writer.writerow(row)
 
-    print(f"✅ Exported {len(data)} workflow runs to {filename}")
+    print(f"\n✅ Metadata written to: {CSV_FILE}")
 
 if __name__ == "__main__":
-    all_runs = collect_data()
-    export_to_csv(all_runs, CSV_FILENAME)
+    main()
