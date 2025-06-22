@@ -1,15 +1,23 @@
+#from ast import arg
+#from html import parser
 import re
 import csv
 import time
 import requests
+import argparse
 from tenacity import retry, wait_exponential, stop_after_attempt
 
+# parser.add_agrument('--env', required=True, help='env name')
+# args = parser.parse_args()
+
 # ---- Configuration ----
-GITHUB_TOKEN = 'your_github_token_here'
-ORG = 'your_org_name_here'
-WORKFLOW_REGEX = r"deploy.*uat.*\.ya?ml"
+GITHUB_TOKEN = 'your_Token'
+ORG = 'iag-ct'
+# ENV= args.env
+# WORKFLOW_REGEX = rf"deploy.*{re.escape(ENV)}.*\.ya?ml"
+WORKFLOW_REGEX = rf"deploy.*uat.*\.ya?ml"
 BRANCH = 'main'
-CSV_FILE = 'github_deployment_metadata.csv'
+CSV_FILE = 'github123_deployment_metadata.csv'
 
 HEADERS = {
     "Authorization": f"token {GITHUB_TOKEN}",
@@ -66,12 +74,14 @@ def extract_metadata(repo, workflow, run):
         "status": run.get("status", ""),
         "conclusion": run.get("conclusion", ""),
         "commit_id": run.get("head_sha", ""),
+        "commit_message": run["head_commit"]["message"] if run.get("head_commit") else "N/A",
         "timestamp": run.get("created_at", ""),
-        "html_url": run.get("html_url", "")
+        "html_url": run.get("html_url", ""),
+        "triggered_by": run.get("triggering_actor", {}).get("login", "N/A")
     }
 
 def main():
-    print("Fetching repositories...")
+    print(f"Fetching repositories...")
     repos = get_all_repos()
     print(f"Found {len(repos)} repositories.")
 
@@ -95,7 +105,7 @@ def main():
 
     print(f"Writing {len(all_data)} records to CSV...")
     with open(CSV_FILE, "w", newline='') as csvfile:
-        fieldnames = ["repo", "workflow_name", "description", "status", "conclusion", "commit_id", "timestamp", "html_url"]
+        fieldnames = ["repo", "workflow_name", "description", "status", "conclusion", "commit_id", "commit_message", "timestamp", "html_url", "triggered_by" ]
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(all_data)
